@@ -1,5 +1,15 @@
+use config::Config;
+use notify::{RecursiveMode::NonRecursive, Watcher};
 use rapier2d::prelude::*;
 use raylib::prelude::*;
+use std::{
+    mem::MaybeUninit,
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Mutex,
+    },
+};
 
 mod config;
 
@@ -7,9 +17,8 @@ const DEFAULT_WIDTH: i32 = 1280;
 const DEFAULT_HEIGHT: i32 = 720;
 
 fn main() {
-    let config = std::fs::read_to_string("config.toml").expect("failed to read config");
-    let config: config::Config = toml::from_str(&config).expect("failed to deserialize config");
-
+    init_config();
+    let init_config = load_config();
     let (mut rl, thread) = raylib::init()
         .size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
         .resizable()
@@ -20,47 +29,53 @@ fn main() {
     // Use fps to set sim speed.
     // Can run multiple physic steps per frame to run faster.
     // Can also turn of visualization to run super fast.
-    rl.set_target_fps(60);
+    rl.set_target_fps(init_config.target_fps);
 
     let mut rigid_body_set = RigidBodySet::new();
     let mut collider_set = ColliderSet::new();
 
     // Create the walls.
     collider_set.insert(
-        ColliderBuilder::cuboid(config.sim.width / 2.0, 0.1)
-            .translation(vector![0.0, 0.5 * config.sim.height])
+        ColliderBuilder::cuboid(init_config.sim.width / 2.0, 0.1)
+            .translation(vector![0.0, 0.5 * init_config.sim.height])
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(config.sim.width / 2.0, 0.1)
-            .translation(vector![0.0, -0.5 * config.sim.height])
+        ColliderBuilder::cuboid(init_config.sim.width / 2.0, 0.1)
+            .translation(vector![0.0, -0.5 * init_config.sim.height])
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(0.1, config.sim.height / 2.0)
-            .translation(vector![0.5 * config.sim.width, 0.0])
+        ColliderBuilder::cuboid(0.1, init_config.sim.height / 2.0)
+            .translation(vector![0.5 * init_config.sim.width, 0.0])
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(0.1, config.sim.height / 2.0)
-            .translation(vector![-0.5 * config.sim.width, 0.0])
+        ColliderBuilder::cuboid(0.1, init_config.sim.height / 2.0)
+            .translation(vector![-0.5 * init_config.sim.width, 0.0])
             .restitution(1.0)
             .build(),
     );
+
+    let mut watcher =
+        notify::recommended_watcher(reload_config).expect("failed to load file watcher");
+    watcher
+        .watch(Path::new(CONFIG_PATH), NonRecursive)
+        .expect("failed to watch config file");
 
     // Create the bouncing ball.
     let rigid_body = RigidBodyBuilder::dynamic()
         .translation(vector![0.0, 0.0])
         .build();
-    let collider = ColliderBuilder::ball(3.0).restitution(1.0).build();
+    let collider = ColliderBuilder::ball(1.0).restitution(1.0).build();
     let ball_body_handle = rigid_body_set.insert(rigid_body);
     collider_set.insert_with_parent(collider, ball_body_handle, &mut rigid_body_set);
 
     // Create other structures necessary for the simulation.
-    let gravity = vector![0.0, 10.0];
+    let gravity = vector![0.0, 9.81];
     let integration_parameters = IntegrationParameters::default();
     let mut physics_pipeline = PhysicsPipeline::new();
     let mut island_manager = IslandManager::new();
@@ -96,6 +111,8 @@ fn main() {
         let height = rl.get_screen_height();
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::DIMGRAY);
+
+        let config = load_config();
         let mut render_backend = DebugRaylibRender::new(d, width, height, &config.sim);
         debug_render_pipeline.render(
             &mut render_backend,
@@ -157,4 +174,38 @@ impl DebugRenderBackend for DebugRaylibRender<'_> {
         let c = Color::color_from_normalized(Vector4::new(color[0], color[1], color[2], color[2]));
         self.d.draw_line_ex(a, b, 4.0, c);
     }
+}
+
+const CONFIG_PATH: &'static str = "config.toml";
+static CONFIG: Mutex<MaybeUninit<Config>> = Mutex::new(MaybeUninit::uninit());
+static CONFIG_UPDATED: AtomicBool = AtomicBool::new(false);
+
+fn load_config_from_file() -> Config {
+    let config = std::fs::read_to_string(CONFIG_PATH).expect("failed to read config");
+    toml::from_str(&config).expect("failed to deserialize config")
+}
+
+fn init_config() {
+    let config = load_config_from_file();
+    CONFIG.lock().unwrap().write(config);
+}
+
+fn reload_config(res: notify::Result<notify::Event>) {
+    match res {
+        Ok(_) if !CONFIG_UPDATED.load(SeqCst) => {
+            CONFIG_UPDATED.store(true, SeqCst);
+            let config = load_config_from_file();
+            dbg!(config);
+            CONFIG.lock().unwrap().write(config);
+        }
+        Ok(_) => {}
+        Err(e) => panic!("Failed to watch config file: {:?}", e),
+    }
+}
+
+fn load_config() -> Config {
+    // TODO: is this a perf issue. If the config gets large,
+    // this may copy a lot of data to read only one field.
+    CONFIG_UPDATED.store(false, SeqCst);
+    unsafe { CONFIG.lock().unwrap().assume_init() }
 }
