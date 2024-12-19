@@ -1,4 +1,3 @@
-use config::Config;
 use notify::{RecursiveMode::NonRecursive, Watcher};
 use rapier2d::prelude::*;
 use raylib::prelude::*;
@@ -12,6 +11,7 @@ use std::{
 };
 
 mod config;
+use config::Config;
 
 const DEFAULT_WIDTH: i32 = 1280;
 const DEFAULT_HEIGHT: i32 = 720;
@@ -40,25 +40,21 @@ fn main() {
     collider_set.insert(
         ColliderBuilder::cuboid(init_config.sim.width / 2.0, 0.1)
             .translation(vector![0.0, 0.5 * init_config.sim.height])
-            .restitution(1.0)
             .build(),
     );
     collider_set.insert(
         ColliderBuilder::cuboid(init_config.sim.width / 2.0, 0.1)
             .translation(vector![0.0, -0.5 * init_config.sim.height])
-            .restitution(1.0)
             .build(),
     );
     collider_set.insert(
         ColliderBuilder::cuboid(0.1, init_config.sim.height / 2.0)
             .translation(vector![0.5 * init_config.sim.width, 0.0])
-            .restitution(1.0)
             .build(),
     );
     collider_set.insert(
         ColliderBuilder::cuboid(0.1, init_config.sim.height / 2.0)
             .translation(vector![-0.5 * init_config.sim.width, 0.0])
-            .restitution(1.0)
             .build(),
     );
 
@@ -68,16 +64,10 @@ fn main() {
         .watch(Path::new(CONFIG_PATH), NonRecursive)
         .expect("failed to watch config file");
 
-    // Create the bouncing ball.
-    let rigid_body = RigidBodyBuilder::dynamic().build();
-    let collider = ColliderBuilder::triangle(point![0.0, 4.0], point![-2.0, 0.0], point![2.0, 0.0])
-        .restitution(1.0)
-        .build();
-    let ball_body_handle = rigid_body_set.insert(rigid_body);
-    collider_set.insert_with_parent(collider, ball_body_handle, &mut rigid_body_set);
+    let shark_handle = create_shark(&mut rigid_body_set, &mut collider_set);
 
     // Create other structures necessary for the simulation.
-    let gravity = vector![0.0, 9.81];
+    let gravity = vector![0.0, 0.0];
     let integration_parameters = IntegrationParameters::default();
     let mut physics_pipeline = PhysicsPipeline::new();
     let mut island_manager = IslandManager::new();
@@ -93,6 +83,32 @@ fn main() {
     let debug_render_style = DebugRenderStyle::default();
     let mut debug_render_pipeline = DebugRenderPipeline::new(debug_render_style, debug_render_mode);
     while !rl.window_should_close() {
+        let config = load_config();
+
+        use raylib::consts::KeyboardKey::*;
+        let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
+        let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
+        // Limit max backwards acceleration.
+        let forward = (config.sharks.max_force * forward as f32)
+            .max(config.sharks.max_reverse_force)
+            .min(config.sharks.max_force);
+
+        let shark = rigid_body_set.get_mut(shark_handle).unwrap();
+        let shark_forward_force = forward;
+        let shark_torque = config.sharks.max_torque * right as f32;
+        let shark_rot = shark.rotation();
+        let shark_force = vector![
+            shark_forward_force * -shark_rot.im,
+            shark_forward_force * shark_rot.re
+        ];
+        shark.set_linear_damping(config.sharks.linear_damping);
+        shark.set_angular_damping(config.sharks.angular_damping);
+
+        shark.reset_forces(true);
+        shark.add_force(shark_force, true);
+        shark.reset_torques(true);
+        shark.add_torque(shark_torque, true);
+
         physics_pipeline.step(
             &gravity,
             &integration_parameters,
@@ -114,7 +130,6 @@ fn main() {
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::DIMGRAY);
 
-        let config = load_config();
         let mut render_backend = DebugRaylibRender::new(d, width, height, &config.sim);
         debug_render_pipeline.render(
             &mut render_backend,
@@ -125,6 +140,18 @@ fn main() {
             &narrow_phase,
         );
     }
+}
+
+fn create_shark(
+    rigid_body_set: &mut RigidBodySet,
+    collider_set: &mut ColliderSet,
+) -> RigidBodyHandle {
+    let rigid_body = RigidBodyBuilder::dynamic().build();
+    let collider =
+        ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0]).build();
+    let shark_handle = rigid_body_set.insert(rigid_body);
+    collider_set.insert_with_parent(collider, shark_handle, rigid_body_set);
+    shark_handle
 }
 
 struct DebugRaylibRender<'a> {
