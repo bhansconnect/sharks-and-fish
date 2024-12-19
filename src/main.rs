@@ -6,7 +6,7 @@ use std::{
     mem::MaybeUninit,
     path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, Ordering},
         Mutex,
     },
 };
@@ -17,9 +17,11 @@ const DEFAULT_WIDTH: i32 = 1280;
 const DEFAULT_HEIGHT: i32 = 720;
 
 fn main() {
+    pretty_env_logger::init();
     init_config();
     let init_config = load_config();
     let (mut rl, thread) = raylib::init()
+        .log_level(raylib::consts::TraceLogLevel::LOG_WARNING)
         .size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
         .resizable()
         .title("Sharks and Fish")
@@ -182,7 +184,9 @@ static CONFIG_UPDATED: AtomicBool = AtomicBool::new(false);
 
 fn load_config_from_file() -> Config {
     let config = std::fs::read_to_string(CONFIG_PATH).expect("failed to read config");
-    toml::from_str(&config).expect("failed to deserialize config")
+    let out = toml::from_str(&config).expect("failed to deserialize config");
+    log::trace!("Loaded config: {:?}", out);
+    out
 }
 
 fn init_config() {
@@ -192,10 +196,10 @@ fn init_config() {
 
 fn reload_config(res: notify::Result<notify::Event>) {
     match res {
-        Ok(_) if !CONFIG_UPDATED.load(SeqCst) => {
-            CONFIG_UPDATED.store(true, SeqCst);
+        Ok(_) if !CONFIG_UPDATED.load(Ordering::Acquire) => {
+            CONFIG_UPDATED.store(true, Ordering::Release);
             let config = load_config_from_file();
-            dbg!(config);
+            log::info!("Loaded new config");
             CONFIG.lock().unwrap().write(config);
         }
         Ok(_) => {}
@@ -204,8 +208,6 @@ fn reload_config(res: notify::Result<notify::Event>) {
 }
 
 fn load_config() -> Config {
-    // TODO: is this a perf issue. If the config gets large,
-    // this may copy a lot of data to read only one field.
-    CONFIG_UPDATED.store(false, SeqCst);
+    CONFIG_UPDATED.store(false, Ordering::Release);
     unsafe { CONFIG.lock().unwrap().assume_init() }
 }
