@@ -69,10 +69,10 @@ fn main() {
         .expect("failed to watch config file");
 
     // Create the bouncing ball.
-    let rigid_body = RigidBodyBuilder::dynamic()
-        .translation(vector![0.0, 0.0])
+    let rigid_body = RigidBodyBuilder::dynamic().build();
+    let collider = ColliderBuilder::triangle(point![0.0, 4.0], point![-2.0, 0.0], point![2.0, 0.0])
+        .restitution(1.0)
         .build();
-    let collider = ColliderBuilder::ball(1.0).restitution(1.0).build();
     let ball_body_handle = rigid_body_set.insert(rigid_body);
     collider_set.insert_with_parent(collider, ball_body_handle, &mut rigid_body_set);
 
@@ -89,7 +89,7 @@ fn main() {
     let physics_hooks = ();
     let event_handler = ();
 
-    let debug_render_mode = DebugRenderMode::all();
+    let debug_render_mode = DebugRenderMode::COLLIDER_SHAPES;
     let debug_render_style = DebugRenderStyle::default();
     let mut debug_render_pipeline = DebugRenderPipeline::new(debug_render_style, debug_render_mode);
     while !rl.window_should_close() {
