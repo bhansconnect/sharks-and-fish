@@ -3816,6 +3816,7 @@ dependencies = [
  "notify",
  "rapier2d",
  "raylib",
+ "serde",
  "toml",
 ]
 

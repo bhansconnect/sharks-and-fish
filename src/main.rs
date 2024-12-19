@@ -1,17 +1,18 @@
 use rapier2d::prelude::*;
 use raylib::prelude::*;
 
-const WIDTH: i32 = 640 * 3 / 2;
-const HEIGHT: i32 = 480 * 3 / 2;
+mod config;
 
-const SIM_WIDTH: f32 = 200.0;
-const SIM_HEIGHT: f32 = 1.0 / (SCALE_H / HEIGHT as f32);
-const SCALE_W: f32 = (WIDTH as f32) / SIM_WIDTH;
-const SCALE_H: f32 = SCALE_W * (WIDTH as f32) / (HEIGHT as f32);
+const DEFAULT_WIDTH: i32 = 1280;
+const DEFAULT_HEIGHT: i32 = 720;
 
 fn main() {
+    let config = std::fs::read_to_string("config.toml").expect("failed to read config");
+    let config: config::Config = toml::from_str(&config).expect("failed to deserialize config");
+
     let (mut rl, thread) = raylib::init()
-        .size(WIDTH, HEIGHT)
+        .size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        .resizable()
         .title("Sharks and Fish")
         .vsync()
         .build();
@@ -26,26 +27,26 @@ fn main() {
 
     // Create the walls.
     collider_set.insert(
-        ColliderBuilder::cuboid(SIM_WIDTH / 2.0, 0.1)
-            .translation(vector![0.0, 0.5 * SIM_HEIGHT])
+        ColliderBuilder::cuboid(config.sim.width / 2.0, 0.1)
+            .translation(vector![0.0, 0.5 * config.sim.height])
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(SIM_WIDTH / 2.0, 0.1)
-            .translation(vector![0.0, -0.5 * SIM_HEIGHT])
+        ColliderBuilder::cuboid(config.sim.width / 2.0, 0.1)
+            .translation(vector![0.0, -0.5 * config.sim.height])
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(0.1, SIM_HEIGHT / 2.0)
-            .translation(vector![0.5 * SIM_WIDTH, 0.0])
+        ColliderBuilder::cuboid(0.1, config.sim.height / 2.0)
+            .translation(vector![0.5 * config.sim.width, 0.0])
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(0.1, SIM_HEIGHT / 2.0)
-            .translation(vector![-0.5 * SIM_WIDTH, 0.0])
+        ColliderBuilder::cuboid(0.1, config.sim.height / 2.0)
+            .translation(vector![-0.5 * config.sim.width, 0.0])
             .restitution(1.0)
             .build(),
     );
@@ -91,9 +92,11 @@ fn main() {
             &event_handler,
         );
 
+        let width = rl.get_screen_width();
+        let height = rl.get_screen_height();
         let mut d = rl.begin_drawing(&thread);
-        d.clear_background(Color::WHITE);
-        let mut render_backend = DebugRaylibRender(d);
+        d.clear_background(Color::DIMGRAY);
+        let mut render_backend = DebugRaylibRender::new(d, width, height, &config.sim);
         debug_render_pipeline.render(
             &mut render_backend,
             &rigid_body_set,
@@ -105,13 +108,40 @@ fn main() {
     }
 }
 
-struct DebugRaylibRender<'a>(RaylibDrawHandle<'a>);
+struct DebugRaylibRender<'a> {
+    d: RaylibDrawHandle<'a>,
+    scale_w: f32,
+    offset_w: f32,
+    scale_h: f32,
+    offset_h: f32,
+}
 
-fn scale_point(point: Point<f32>) -> Vector2 {
-    Vector2::new(
-        point.x * SCALE_W + (WIDTH / 2) as f32,
-        point.y * SCALE_H + (HEIGHT / 2) as f32,
-    )
+impl<'a> DebugRaylibRender<'a> {
+    fn new(
+        d: RaylibDrawHandle<'a>,
+        screen_width: i32,
+        screen_height: i32,
+        sim: &config::Sim,
+    ) -> Self {
+        let scale_w = screen_width as f32 / sim.width;
+        let scale_h = screen_height as f32 / sim.height;
+        let offset_w = screen_width as f32 / 2.0;
+        let offset_h = screen_height as f32 / 2.0;
+        Self {
+            d,
+            scale_w,
+            scale_h,
+            offset_w,
+            offset_h,
+        }
+    }
+
+    fn scale_point(self: &Self, point: Point<f32>) -> Vector2 {
+        Vector2::new(
+            point.x * self.scale_w + self.offset_w,
+            point.y * self.scale_h + self.offset_h,
+        )
+    }
 }
 
 impl DebugRenderBackend for DebugRaylibRender<'_> {
@@ -122,9 +152,9 @@ impl DebugRenderBackend for DebugRaylibRender<'_> {
         b: Point<f32>,
         color: [f32; 4],
     ) {
-        let a = scale_point(a);
-        let b = scale_point(b);
+        let a = self.scale_point(a);
+        let b = self.scale_point(b);
         let c = Color::color_from_normalized(Vector4::new(color[0], color[1], color[2], color[2]));
-        self.0.draw_line_ex(a, b, 4.0, c);
+        self.d.draw_line_ex(a, b, 4.0, c);
     }
 }
