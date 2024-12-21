@@ -37,24 +37,32 @@ fn main() {
     let mut collider_set = ColliderSet::new();
 
     // Create the walls.
+    let thickness = 1.0;
     collider_set.insert(
-        ColliderBuilder::cuboid(init_config.sim.width / 2.0, 0.1)
-            .translation(vector![0.0, 0.5 * init_config.sim.height])
+        ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
+            .translation(vector![0.0, 0.5 * init_config.sim.height + thickness / 2.0])
+            .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(init_config.sim.width / 2.0, 0.1)
-            .translation(vector![0.0, -0.5 * init_config.sim.height])
+        ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
+            .translation(vector![
+                0.0,
+                -0.5 * init_config.sim.height - thickness / 2.0
+            ])
+            .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(0.1, init_config.sim.height / 2.0)
-            .translation(vector![0.5 * init_config.sim.width, 0.0])
+        ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
+            .translation(vector![0.5 * init_config.sim.width + thickness / 2.0, 0.0])
+            .restitution(1.0)
             .build(),
     );
     collider_set.insert(
-        ColliderBuilder::cuboid(0.1, init_config.sim.height / 2.0)
-            .translation(vector![-0.5 * init_config.sim.width, 0.0])
+        ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
+            .translation(vector![-0.5 * init_config.sim.width - thickness / 2.0, 0.0])
+            .restitution(1.0)
             .build(),
     );
 
@@ -147,8 +155,9 @@ fn create_shark(
     collider_set: &mut ColliderSet,
 ) -> RigidBodyHandle {
     let rigid_body = RigidBodyBuilder::dynamic().build();
-    let collider =
-        ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0]).build();
+    let collider = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
+        .restitution(1.0)
+        .build();
     let shark_handle = rigid_body_set.insert(rigid_body);
     collider_set.insert_with_parent(collider, shark_handle, rigid_body_set);
     shark_handle
