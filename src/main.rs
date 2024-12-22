@@ -83,7 +83,7 @@ fn main() {
     let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
     let mut rng = Pcg64::from_entropy();
     let mut fishes = vec![];
-    let mut eaten = vec![];
+    let mut dead_fishes = vec![];
     for _ in 0..init_config.fish.count {
         create_fish(
             &mut fishes,
@@ -178,7 +178,7 @@ fn main() {
             &event_handler,
         );
 
-        eaten.clear();
+        dead_fishes.clear();
         for (collider1, collider2, intersecting) in
             narrow_phase.intersection_pairs_with(mouth_handle)
         {
@@ -198,15 +198,30 @@ fn main() {
                 .unwrap();
 
             let index = rigid_body_set.get(fish_handle).unwrap().user_data;
-            eaten.push(index as usize);
+            dead_fishes.push(index as usize);
 
             log::trace!("shark ate fish {:?}", index);
         }
 
-        // For each eaten fish, have another fish reproduce.
-        for &eaten_index in eaten.iter() {
-            let mut parent_index = rng.gen_range(0..(fishes.len() - eaten.len()));
-            while eaten.contains(&parent_index) {
+        let _total_eaten = dead_fishes.len();
+
+        // If extra fish where requested, just add them via extra breeding.
+        for _ in fishes.len()..(config.fish.count as usize) {
+            let handle = create_fish_rigid_body(&mut rigid_body_set, &mut collider_set);
+            let i = fishes.len();
+            rigid_body_set.get_mut(handle).unwrap().user_data = i as u128;
+            let fish = Fish {
+                handle,
+                genome: [0.5; 2],
+            };
+            fishes.push(fish);
+            dead_fishes.push(i);
+        }
+
+        // For each dead fish, have another fish reproduce.
+        for &dead_index in dead_fishes.iter() {
+            let mut parent_index = rng.gen_range(0..(fishes.len() - dead_fishes.len()));
+            while dead_fishes.contains(&parent_index) {
                 parent_index += 1;
                 if parent_index == fishes.len() {
                     parent_index = 0;
@@ -222,10 +237,23 @@ fn main() {
 
             // TODO: should randomly shift the position from the parent.
             rigid_body_set
-                .get_mut(fishes[eaten_index].handle)
+                .get_mut(fishes[dead_index].handle)
                 .unwrap()
                 .set_position(parent_pos, true);
         }
+
+        // Remove any extra fish
+        for i in (config.fish.count as usize)..fishes.len() {
+            rigid_body_set.remove(
+                fishes[i].handle,
+                &mut island_manager,
+                &mut collider_set,
+                &mut impulse_joint_set,
+                &mut multibody_joint_set,
+                true,
+            );
+        }
+        fishes.truncate(config.fish.count as usize);
 
         let width = rl.get_screen_width();
         let height = rl.get_screen_height();
@@ -283,11 +311,11 @@ fn create_fish(
     // Neutral is 0.5.
     let mut fish = Fish {
         handle,
-        genome: [0.0, 0.0],
+        genome: [0.5; 2],
     };
     let scale = 0.05;
     for g in fish.genome.iter_mut() {
-        *g = rng.gen::<f32>() * scale - scale / 2.0 + 0.5;
+        *g += rng.gen::<f32>() * scale - scale / 2.0;
     }
     fishes.push(fish);
 }
