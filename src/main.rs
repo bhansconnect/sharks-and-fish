@@ -82,14 +82,17 @@ fn main() {
 
     let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
     let mut rng = Pcg64::from_entropy();
-    let mut fish_handles = vec![];
-    for i in 0..init_config.fish.count {
-        let fish_handle = create_fish(&mut rigid_body_set, &mut collider_set);
-        randomize_position(&mut rigid_body_set, fish_handle, &mut rng, &init_config);
-        rigid_body_set.get_mut(fish_handle).unwrap().user_data = i as u128;
-        fish_handles.push(fish_handle);
-    }
+    let mut fishes = vec![];
     let mut eaten = vec![];
+    for _ in 0..init_config.fish.count {
+        create_fish(
+            &mut fishes,
+            &mut rigid_body_set,
+            &mut collider_set,
+            &mut rng,
+            &init_config,
+        );
+    }
 
     // Create other structures necessary for the simulation.
     let gravity = vector![0.0, 0.0];
@@ -110,27 +113,29 @@ fn main() {
     while !rl.window_should_close() {
         let config = load_config();
 
-        // TODO: only update these on change, not every frame.
-        for &fish_handle in fish_handles.iter() {
-            let fish = rigid_body_set.get_mut(fish_handle).unwrap();
-            fish.set_linear_damping(config.fish.linear_damping);
-            fish.set_angular_damping(config.fish.angular_damping);
+        for fish in fishes.iter() {
+            let fish_rigid_body = rigid_body_set.get_mut(fish.handle).unwrap();
+            fish_rigid_body.set_linear_damping(config.fish.linear_damping);
+            fish_rigid_body.set_angular_damping(config.fish.angular_damping);
 
-            let fish_forward_force = (config.fish.max_force * 1.0 as f32)
+            let forward = fish.genome[0] * 2.0 - 1.0;
+            let right = fish.genome[1] * 2.0 - 1.0;
+
+            let fish_forward_force = (config.fish.max_force * forward)
                 .max(config.fish.max_reverse_force)
                 .min(config.fish.max_force);
 
-            let fish_torque = config.fish.max_torque * 0.0 as f32;
-            let fish_rot = fish.rotation();
+            let fish_torque = config.fish.max_torque * right;
+            let fish_rot = fish_rigid_body.rotation();
             let fish_force = vector![
                 fish_forward_force * -fish_rot.im,
                 fish_forward_force * fish_rot.re
             ];
 
-            fish.reset_forces(true);
-            fish.add_force(fish_force, true);
-            fish.reset_torques(true);
-            fish.add_torque(fish_torque, true);
+            fish_rigid_body.reset_forces(true);
+            fish_rigid_body.add_force(fish_force, true);
+            fish_rigid_body.reset_torques(true);
+            fish_rigid_body.add_torque(fish_torque, true);
         }
 
         use raylib::consts::KeyboardKey::*;
@@ -200,10 +205,10 @@ fn main() {
 
         // For each eaten fish, have another fish reproduce.
         for &eaten_index in eaten.iter() {
-            let mut parent_index = rng.gen_range(0..(fish_handles.len() - eaten.len()));
+            let mut parent_index = rng.gen_range(0..(fishes.len() - eaten.len()));
             while eaten.contains(&parent_index) {
                 parent_index += 1;
-                if parent_index == fish_handles.len() {
+                if parent_index == fishes.len() {
                     parent_index = 0;
                 }
             }
@@ -211,13 +216,13 @@ fn main() {
 
             // TODO: apply GA from parent to child (maybe select 2 parents for better reproduction).
             let &parent_pos = rigid_body_set
-                .get(fish_handles[parent_index])
+                .get(fishes[parent_index].handle)
                 .unwrap()
                 .position();
 
             // TODO: should randomly shift the position from the parent.
             rigid_body_set
-                .get_mut(fish_handles[eaten_index])
+                .get_mut(fishes[eaten_index].handle)
                 .unwrap()
                 .set_position(parent_pos, true);
         }
@@ -257,7 +262,37 @@ fn create_shark(
     (shark_handle, mouth_handle)
 }
 
+struct Fish {
+    handle: RigidBodyHandle,
+    genome: [f32; 2],
+}
+
 fn create_fish(
+    fishes: &mut Vec<Fish>,
+    rigid_body_set: &mut RigidBodySet,
+    collider_set: &mut ColliderSet,
+    rng: &mut Pcg64,
+    config: &Config,
+) {
+    let handle = create_fish_rigid_body(rigid_body_set, collider_set);
+    randomize_position(rigid_body_set, handle, rng, config);
+    let i = fishes.len();
+    rigid_body_set.get_mut(handle).unwrap().user_data = i as u128;
+
+    // Start with super small non-neutral genome.
+    // Neutral is 0.5.
+    let mut fish = Fish {
+        handle,
+        genome: [0.0, 0.0],
+    };
+    let scale = 0.05;
+    for g in fish.genome.iter_mut() {
+        *g = rng.gen::<f32>() * scale - scale / 2.0 + 0.5;
+    }
+    fishes.push(fish);
+}
+
+fn create_fish_rigid_body(
     rigid_body_set: &mut RigidBodySet,
     collider_set: &mut ColliderSet,
 ) -> RigidBodyHandle {
