@@ -83,15 +83,13 @@ fn main() {
     let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
     let mut rng = Pcg64::from_entropy();
     let mut fish_handles = vec![];
-    for _ in 0..init_config.fish.count {
-        let fish_handle = create_fish(
-            &mut rigid_body_set,
-            &mut collider_set,
-            &mut rng,
-            &init_config,
-        );
+    for i in 0..init_config.fish.count {
+        let fish_handle = create_fish(&mut rigid_body_set, &mut collider_set);
+        randomize_position(&mut rigid_body_set, fish_handle, &mut rng, &init_config);
+        rigid_body_set.get_mut(fish_handle).unwrap().user_data = i as u128;
         fish_handles.push(fish_handle);
     }
+    let mut eaten = vec![];
 
     // Create other structures necessary for the simulation.
     let gravity = vector![0.0, 0.0];
@@ -175,6 +173,7 @@ fn main() {
             &event_handler,
         );
 
+        eaten.clear();
         for (collider1, collider2, intersecting) in
             narrow_phase.intersection_pairs_with(mouth_handle)
         {
@@ -187,12 +186,40 @@ fn main() {
             } else {
                 collider1
             };
-            let body = collider_set
+            let fish_handle = collider_set
                 .get_mut(other_collider)
                 .unwrap()
                 .parent()
                 .unwrap();
-            log::trace!("intersection of shark and {:?}", body);
+
+            let index = rigid_body_set.get(fish_handle).unwrap().user_data;
+            eaten.push(index as usize);
+
+            log::trace!("shark ate fish {:?}", index);
+        }
+
+        // For each eaten fish, have another fish reproduce.
+        for &eaten_index in eaten.iter() {
+            let mut parent_index = rng.gen_range(0..(fish_handles.len() - eaten.len()));
+            while eaten.contains(&parent_index) {
+                parent_index += 1;
+                if parent_index == fish_handles.len() {
+                    parent_index = 0;
+                }
+            }
+            log::trace!("fish {:?} reproduced", parent_index);
+
+            // TODO: apply GA from parent to child (maybe select 2 parents for better reproduction).
+            let &parent_pos = rigid_body_set
+                .get(fish_handles[parent_index])
+                .unwrap()
+                .position();
+
+            // TODO: should randomly shift the position from the parent.
+            rigid_body_set
+                .get_mut(fish_handles[eaten_index])
+                .unwrap()
+                .set_position(parent_pos, true);
         }
 
         let width = rl.get_screen_width();
@@ -233,17 +260,8 @@ fn create_shark(
 fn create_fish(
     rigid_body_set: &mut RigidBodySet,
     collider_set: &mut ColliderSet,
-    rng: &mut Pcg64,
-    config: &Config,
 ) -> RigidBodyHandle {
-    let rot = rng.gen::<f32>() * std::f32::consts::TAU;
-    let x = (rng.gen::<f32>() - 0.5) * (config.sim.width - 0.5);
-    let y = (rng.gen::<f32>() - 0.5) * (config.sim.height - 1.0);
-    log::trace!("Loading fish at ({}, {})", x, y);
-    let rigid_body = RigidBodyBuilder::dynamic()
-        .rotation(rot)
-        .translation(vector![x, y])
-        .build();
+    let rigid_body = RigidBodyBuilder::dynamic().build();
     let body = ColliderBuilder::triangle(point![0.0, 2.0], point![-0.5, 0.0], point![0.5, 0.0])
         .restitution(1.0)
         .collision_groups(InteractionGroups::new(
@@ -254,6 +272,20 @@ fn create_fish(
     let fish_handle = rigid_body_set.insert(rigid_body);
     collider_set.insert_with_parent(body, fish_handle, rigid_body_set);
     fish_handle
+}
+
+fn randomize_position(
+    rigid_body_set: &mut RigidBodySet,
+    handle: RigidBodyHandle,
+    rng: &mut Pcg64,
+    config: &Config,
+) {
+    let x = (rng.gen::<f32>() - 0.5) * (config.sim.width - 0.5);
+    let y = (rng.gen::<f32>() - 0.5) * (config.sim.height - 1.0);
+    let rot = rng.gen::<f32>() * std::f32::consts::TAU;
+    log::trace!("Placing randomly at ({}, {}) with rotation {}", x, y, rot);
+    let obj = rigid_body_set.get_mut(handle).unwrap();
+    obj.set_position(Isometry::new(vector![x, y], rot), true);
 }
 
 struct DebugRaylibRender<'a> {
