@@ -32,4 +32,5 @@ pub struct Fish {
     pub max_force: f32,
     pub max_reverse_force: f32,
     pub max_torque: f32,
+    pub mutation_factor: f32,
 }

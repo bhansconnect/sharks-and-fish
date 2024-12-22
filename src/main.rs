@@ -229,13 +229,21 @@ fn main() {
             }
             log::trace!("fish {:?} reproduced", parent_index);
 
-            // TODO: apply GA from parent to child (maybe select 2 parents for better reproduction).
-            let &parent_pos = rigid_body_set
+            // TODO: look into smarter mutation and 2 parent crossover.
+            let mut parent_pos = *rigid_body_set
                 .get(fishes[parent_index].handle)
                 .unwrap()
                 .position();
 
-            // TODO: should randomly shift the position from the parent.
+            fishes[dead_index].genome = fishes[parent_index].genome;
+            for g in fishes[dead_index].genome.iter_mut() {
+                let shift = rng.gen::<f32>() * config.fish.mutation_factor
+                    - config.fish.mutation_factor / 2.0;
+                *g = sig(inv_sig(*g) + shift);
+            }
+
+            let rot = rng.gen::<f32>() * std::f32::consts::TAU;
+            parent_pos.rotation = Rotation::new(rot);
             rigid_body_set
                 .get_mut(fishes[dead_index].handle)
                 .unwrap()
@@ -349,6 +357,14 @@ fn randomize_position(
     log::trace!("Placing randomly at ({}, {}) with rotation {}", x, y, rot);
     let obj = rigid_body_set.get_mut(handle).unwrap();
     obj.set_position(Isometry::new(vector![x, y], rot), true);
+}
+
+fn sig(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+fn inv_sig(x: f32) -> f32 {
+    (x / (1.0 - x)).ln()
 }
 
 struct DebugRaylibRender<'a> {

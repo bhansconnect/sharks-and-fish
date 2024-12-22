@@ -23,3 +23,4 @@ angular_damping = 1.5
 max_force = 40.0
 max_reverse_force = -30.0
 max_torque = 20.0
+mutation_factor = 0.1
