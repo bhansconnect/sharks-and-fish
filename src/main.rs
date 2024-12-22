@@ -1,4 +1,6 @@
 use notify::{RecursiveMode::NonRecursive, Watcher};
+use rand::prelude::*;
+use rand_pcg::Pcg64;
 use rapier2d::prelude::*;
 use raylib::prelude::*;
 use std::{
@@ -15,6 +17,8 @@ use config::Config;
 
 const DEFAULT_WIDTH: i32 = 1280;
 const DEFAULT_HEIGHT: i32 = 720;
+const MAIN_GROUP: Group = Group::GROUP_1;
+const EDIBLE_GROUP: Group = Group::GROUP_2;
 
 fn main() {
     pretty_env_logger::init();
@@ -41,6 +45,7 @@ fn main() {
     collider_set.insert(
         ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
             .translation(vector![0.0, 0.5 * init_config.sim.height + thickness / 2.0])
+            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
             .build(),
     );
@@ -50,18 +55,21 @@ fn main() {
                 0.0,
                 -0.5 * init_config.sim.height - thickness / 2.0
             ])
+            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
         ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
             .translation(vector![0.5 * init_config.sim.width + thickness / 2.0, 0.0])
+            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
             .build(),
     );
     collider_set.insert(
         ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
             .translation(vector![-0.5 * init_config.sim.width - thickness / 2.0, 0.0])
+            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
             .build(),
     );
@@ -72,7 +80,14 @@ fn main() {
         .watch(Path::new(CONFIG_PATH), NonRecursive)
         .expect("failed to watch config file");
 
-    let shark_handle = create_shark(&mut rigid_body_set, &mut collider_set);
+    let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
+    let mut rng = Pcg64::from_entropy();
+    let fish_handle = create_fish(
+        &mut rigid_body_set,
+        &mut collider_set,
+        &mut rng,
+        &init_config,
+    );
 
     // Create other structures necessary for the simulation.
     let gravity = vector![0.0, 0.0];
@@ -100,6 +115,10 @@ fn main() {
         let forward = (config.sharks.max_force * forward as f32)
             .max(config.sharks.max_reverse_force)
             .min(config.sharks.max_force);
+
+        let fish = rigid_body_set.get_mut(fish_handle).unwrap();
+        fish.set_linear_damping(config.sharks.linear_damping);
+        fish.set_angular_damping(config.sharks.angular_damping);
 
         let shark = rigid_body_set.get_mut(shark_handle).unwrap();
         let shark_forward_force = forward;
@@ -133,6 +152,26 @@ fn main() {
             &event_handler,
         );
 
+        for (collider1, collider2, intersecting) in
+            narrow_phase.intersection_pairs_with(mouth_handle)
+        {
+            if !intersecting {
+                continue;
+            }
+
+            let other_collider = if collider1 == mouth_handle {
+                collider2
+            } else {
+                collider1
+            };
+            let body = collider_set
+                .get_mut(other_collider)
+                .unwrap()
+                .parent()
+                .unwrap();
+            log::trace!("intersection of shark and {:?}", body);
+        }
+
         let width = rl.get_screen_width();
         let height = rl.get_screen_height();
         let mut d = rl.begin_drawing(&thread);
@@ -153,14 +192,42 @@ fn main() {
 fn create_shark(
     rigid_body_set: &mut RigidBodySet,
     collider_set: &mut ColliderSet,
+) -> (RigidBodyHandle, ColliderHandle) {
+    let rigid_body = RigidBodyBuilder::dynamic().build();
+    let body = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
+        .restitution(1.0)
+        .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
+        .build();
+    let mouth = ColliderBuilder::triangle(point![0.0, 3.5], point![-0.5, 4.5], point![0.5, 4.5])
+        .collision_groups(InteractionGroups::new(EDIBLE_GROUP, EDIBLE_GROUP))
+        .sensor(true);
+    let shark_handle = rigid_body_set.insert(rigid_body);
+    collider_set.insert_with_parent(body, shark_handle, rigid_body_set);
+    let mouth_handle = collider_set.insert_with_parent(mouth, shark_handle, rigid_body_set);
+    (shark_handle, mouth_handle)
+}
+
+fn create_fish(
+    rigid_body_set: &mut RigidBodySet,
+    collider_set: &mut ColliderSet,
+    rng: &mut Pcg64,
+    config: &Config,
 ) -> RigidBodyHandle {
     let rigid_body = RigidBodyBuilder::dynamic().build();
-    let collider = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
+    let x = (rng.gen::<f32>() - 0.5) * (config.sim.width - 0.5);
+    let y = (rng.gen::<f32>() - 0.5) * (config.sim.height - 1.0);
+    log::trace!("Loading fish at ({}, {})", x, y);
+    let body = ColliderBuilder::triangle(point![0.0, 2.0], point![-0.5, 0.0], point![0.5, 0.0])
         .restitution(1.0)
+        .translation(vector![x, y])
+        .collision_groups(InteractionGroups::new(
+            EDIBLE_GROUP | MAIN_GROUP,
+            EDIBLE_GROUP | MAIN_GROUP,
+        ))
         .build();
-    let shark_handle = rigid_body_set.insert(rigid_body);
-    collider_set.insert_with_parent(collider, shark_handle, rigid_body_set);
-    shark_handle
+    let fish_handle = rigid_body_set.insert(rigid_body);
+    collider_set.insert_with_parent(body, fish_handle, rigid_body_set);
+    fish_handle
 }
 
 struct DebugRaylibRender<'a> {

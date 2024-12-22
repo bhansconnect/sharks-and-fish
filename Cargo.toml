@@ -6,12 +6,15 @@ edition = "2021"
 [dependencies]
 burn = { version = "0.15.0", features = ["train", "wgpu", "metal", "metrics", "fusion"] }
 
-raylib = { version = "5.0.2" }
+raylib = "5.0.2"
 rapier2d = { version = "0.22.0", features = [ "simd-stable", "parallel", "debug-render" ] }
 
-notify = { version = "7.0.0" }
-toml = { version = "0.8.19" }
-serde = { version = "1.0.216" }
+rand = { version = "0.8.5", default-features = false, features = ["getrandom"]}
+rand_pcg = "0.3.1"
 
-log = { version = "0.4.22" }
-pretty_env_logger = { version = "0.5.0" }
+notify = "7.0.0"
+toml = "0.8.19"
+serde = "1.0.216"
+
+log = "0.4.22"
+pretty_env_logger = "0.5.0"

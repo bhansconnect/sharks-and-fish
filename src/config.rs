@@ -15,7 +15,7 @@ pub struct Sim {
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 pub struct Sharks {
-    pub count: u32,
+    // pub count: u32,
     pub linear_damping: f32,
     pub angular_damping: f32,
     pub max_force: f32,
