@@ -15,7 +15,7 @@ max_reverse_force = -40.0
 max_torque = 50.0
 
 [fish]
-count = 10
+count = 50
 # goal for the first is to be slower with higher acceleration.
 # Also, want to promote schooling somehow.
 linear_damping = 2.0

@@ -47,6 +47,7 @@ fn main() {
             .translation(vector![0.0, 0.5 * init_config.sim.height + thickness / 2.0])
             .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
+            .friction(0.0)
             .build(),
     );
     collider_set.insert(
@@ -57,6 +58,7 @@ fn main() {
             ])
             .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
+            .friction(0.0)
             .build(),
     );
     collider_set.insert(
@@ -64,6 +66,7 @@ fn main() {
             .translation(vector![0.5 * init_config.sim.width + thickness / 2.0, 0.0])
             .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
+            .friction(0.0)
             .build(),
     );
     collider_set.insert(
@@ -71,6 +74,7 @@ fn main() {
             .translation(vector![-0.5 * init_config.sim.width - thickness / 2.0, 0.0])
             .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
             .restitution(1.0)
+            .friction(0.0)
             .build(),
     );
 
@@ -287,6 +291,7 @@ fn create_shark(
     let rigid_body = RigidBodyBuilder::dynamic().build();
     let body = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
         .restitution(1.0)
+        .friction(0.0)
         .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
         .build();
     let mouth = ColliderBuilder::triangle(point![0.0, 3.5], point![-0.5, 4.5], point![0.5, 4.5])
@@ -335,6 +340,7 @@ fn create_fish_rigid_body(
     let rigid_body = RigidBodyBuilder::dynamic().build();
     let body = ColliderBuilder::triangle(point![0.0, 2.0], point![-0.5, 0.0], point![0.5, 0.0])
         .restitution(1.0)
+        .friction(0.0)
         .collision_groups(InteractionGroups::new(
             EDIBLE_GROUP | MAIN_GROUP,
             EDIBLE_GROUP | MAIN_GROUP,
