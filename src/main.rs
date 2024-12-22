@@ -82,12 +82,16 @@ fn main() {
 
     let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
     let mut rng = Pcg64::from_entropy();
-    let fish_handle = create_fish(
-        &mut rigid_body_set,
-        &mut collider_set,
-        &mut rng,
-        &init_config,
-    );
+    let mut fish_handles = vec![];
+    for _ in 0..init_config.fish.count {
+        let fish_handle = create_fish(
+            &mut rigid_body_set,
+            &mut collider_set,
+            &mut rng,
+            &init_config,
+        );
+        fish_handles.push(fish_handle);
+    }
 
     // Create other structures necessary for the simulation.
     let gravity = vector![0.0, 0.0];
@@ -108,6 +112,29 @@ fn main() {
     while !rl.window_should_close() {
         let config = load_config();
 
+        // TODO: only update these on change, not every frame.
+        for &fish_handle in fish_handles.iter() {
+            let fish = rigid_body_set.get_mut(fish_handle).unwrap();
+            fish.set_linear_damping(config.fish.linear_damping);
+            fish.set_angular_damping(config.fish.angular_damping);
+
+            let fish_forward_force = (config.fish.max_force * 1.0 as f32)
+                .max(config.fish.max_reverse_force)
+                .min(config.fish.max_force);
+
+            let fish_torque = config.fish.max_torque * 0.0 as f32;
+            let fish_rot = fish.rotation();
+            let fish_force = vector![
+                fish_forward_force * -fish_rot.im,
+                fish_forward_force * fish_rot.re
+            ];
+
+            fish.reset_forces(true);
+            fish.add_force(fish_force, true);
+            fish.reset_torques(true);
+            fish.add_torque(fish_torque, true);
+        }
+
         use raylib::consts::KeyboardKey::*;
         let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
         let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
@@ -115,10 +142,6 @@ fn main() {
         let forward = (config.sharks.max_force * forward as f32)
             .max(config.sharks.max_reverse_force)
             .min(config.sharks.max_force);
-
-        let fish = rigid_body_set.get_mut(fish_handle).unwrap();
-        fish.set_linear_damping(config.sharks.linear_damping);
-        fish.set_angular_damping(config.sharks.angular_damping);
 
         let shark = rigid_body_set.get_mut(shark_handle).unwrap();
         let shark_forward_force = forward;
@@ -213,13 +236,16 @@ fn create_fish(
     rng: &mut Pcg64,
     config: &Config,
 ) -> RigidBodyHandle {
-    let rigid_body = RigidBodyBuilder::dynamic().build();
+    let rot = rng.gen::<f32>() * std::f32::consts::TAU;
     let x = (rng.gen::<f32>() - 0.5) * (config.sim.width - 0.5);
     let y = (rng.gen::<f32>() - 0.5) * (config.sim.height - 1.0);
     log::trace!("Loading fish at ({}, {})", x, y);
+    let rigid_body = RigidBodyBuilder::dynamic()
+        .rotation(rot)
+        .translation(vector![x, y])
+        .build();
     let body = ColliderBuilder::triangle(point![0.0, 2.0], point![-0.5, 0.0], point![0.5, 0.0])
         .restitution(1.0)
-        .translation(vector![x, y])
         .collision_groups(InteractionGroups::new(
             EDIBLE_GROUP | MAIN_GROUP,
             EDIBLE_GROUP | MAIN_GROUP,
