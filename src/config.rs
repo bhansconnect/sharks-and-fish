@@ -4,7 +4,7 @@ use serde::Deserialize;
 pub struct Config {
     pub sim: Sim,
     pub target_fps: u32,
-    pub sharks: Sharks,
+    pub shark: Shark,
     pub fish: Fish,
 }
 
@@ -12,11 +12,14 @@ pub struct Config {
 pub struct Sim {
     pub width: f32,
     pub height: f32,
+    pub sims_per_frame: u32,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
-pub struct Sharks {
-    // pub count: u32,
+pub struct Shark {
+    pub vision_cones: u32,
+    pub vision_cone_length: f32,
+    pub vision_angle: f32,
     pub linear_damping: f32,
     pub angular_damping: f32,
     pub max_force: f32,

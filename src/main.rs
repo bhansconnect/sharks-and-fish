@@ -84,7 +84,8 @@ fn main() {
         .watch(Path::new(CONFIG_PATH), NonRecursive)
         .expect("failed to watch config file");
 
-    let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
+    let (shark_handle, mouth_handle) =
+        create_shark(&mut rigid_body_set, &mut collider_set, &init_config);
     let mut rng = Pcg64::from_entropy();
     let mut fishes = vec![];
     let mut dead_fishes = vec![];
@@ -116,163 +117,165 @@ fn main() {
     let mut debug_render_pipeline = DebugRenderPipeline::new(debug_render_style, debug_render_mode);
     while !rl.window_should_close() {
         let config = load_config();
+        for _ in 0..config.sim.sims_per_frame {
+            for fish in fishes.iter() {
+                let fish_rigid_body = rigid_body_set.get_mut(fish.handle).unwrap();
+                fish_rigid_body.set_linear_damping(config.fish.linear_damping);
+                fish_rigid_body.set_angular_damping(config.fish.angular_damping);
 
-        for fish in fishes.iter() {
-            let fish_rigid_body = rigid_body_set.get_mut(fish.handle).unwrap();
-            fish_rigid_body.set_linear_damping(config.fish.linear_damping);
-            fish_rigid_body.set_angular_damping(config.fish.angular_damping);
+                let forward = fish.genome[0] * 2.0 - 1.0;
+                let right = fish.genome[1] * 2.0 - 1.0;
 
-            let forward = fish.genome[0] * 2.0 - 1.0;
-            let right = fish.genome[1] * 2.0 - 1.0;
+                let fish_forward_force = (config.fish.max_force * forward)
+                    .max(config.fish.max_reverse_force)
+                    .min(config.fish.max_force);
 
-            let fish_forward_force = (config.fish.max_force * forward)
-                .max(config.fish.max_reverse_force)
-                .min(config.fish.max_force);
+                let fish_torque = config.fish.max_torque * right;
+                let fish_rot = fish_rigid_body.rotation();
+                let fish_force = vector![
+                    fish_forward_force * -fish_rot.im,
+                    fish_forward_force * fish_rot.re
+                ];
 
-            let fish_torque = config.fish.max_torque * right;
-            let fish_rot = fish_rigid_body.rotation();
-            let fish_force = vector![
-                fish_forward_force * -fish_rot.im,
-                fish_forward_force * fish_rot.re
+                fish_rigid_body.reset_forces(true);
+                fish_rigid_body.add_force(fish_force, true);
+                fish_rigid_body.reset_torques(true);
+                fish_rigid_body.add_torque(fish_torque, true);
+            }
+
+            use raylib::consts::KeyboardKey::*;
+            let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
+            let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
+            // Limit max backwards acceleration.
+            let forward = (config.shark.max_force * forward as f32)
+                .max(config.shark.max_reverse_force)
+                .min(config.shark.max_force);
+
+            let shark = rigid_body_set.get_mut(shark_handle).unwrap();
+            let shark_forward_force = forward;
+            let shark_torque = config.shark.max_torque * right as f32;
+            let shark_rot = shark.rotation();
+            let shark_force = vector![
+                shark_forward_force * -shark_rot.im,
+                shark_forward_force * shark_rot.re
             ];
+            shark.set_linear_damping(config.shark.linear_damping);
+            shark.set_angular_damping(config.shark.angular_damping);
 
-            fish_rigid_body.reset_forces(true);
-            fish_rigid_body.add_force(fish_force, true);
-            fish_rigid_body.reset_torques(true);
-            fish_rigid_body.add_torque(fish_torque, true);
-        }
+            shark.reset_forces(true);
+            shark.add_force(shark_force, true);
+            shark.reset_torques(true);
+            shark.add_torque(shark_torque, true);
 
-        use raylib::consts::KeyboardKey::*;
-        let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
-        let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
-        // Limit max backwards acceleration.
-        let forward = (config.sharks.max_force * forward as f32)
-            .max(config.sharks.max_reverse_force)
-            .min(config.sharks.max_force);
-
-        let shark = rigid_body_set.get_mut(shark_handle).unwrap();
-        let shark_forward_force = forward;
-        let shark_torque = config.sharks.max_torque * right as f32;
-        let shark_rot = shark.rotation();
-        let shark_force = vector![
-            shark_forward_force * -shark_rot.im,
-            shark_forward_force * shark_rot.re
-        ];
-        shark.set_linear_damping(config.sharks.linear_damping);
-        shark.set_angular_damping(config.sharks.angular_damping);
-
-        shark.reset_forces(true);
-        shark.add_force(shark_force, true);
-        shark.reset_torques(true);
-        shark.add_torque(shark_torque, true);
-
-        physics_pipeline.step(
-            &gravity,
-            &integration_parameters,
-            &mut island_manager,
-            &mut broad_phase,
-            &mut narrow_phase,
-            &mut rigid_body_set,
-            &mut collider_set,
-            &mut impulse_joint_set,
-            &mut multibody_joint_set,
-            &mut ccd_solver,
-            None,
-            &physics_hooks,
-            &event_handler,
-        );
-
-        dead_fishes.clear();
-        for (collider1, collider2, intersecting) in
-            narrow_phase.intersection_pairs_with(mouth_handle)
-        {
-            if !intersecting {
-                continue;
-            }
-
-            let other_collider = if collider1 == mouth_handle {
-                collider2
-            } else {
-                collider1
-            };
-            let fish_handle = collider_set
-                .get_mut(other_collider)
-                .unwrap()
-                .parent()
-                .unwrap();
-
-            let index = rigid_body_set.get(fish_handle).unwrap().user_data;
-            dead_fishes.push(index as usize);
-
-            log::trace!("shark ate fish {:?}", index);
-        }
-
-        let _total_eaten = dead_fishes.len();
-
-        // If extra fish where requested, just add them via extra breeding.
-        for _ in fishes.len()..(config.fish.count as usize) {
-            let handle = create_fish_rigid_body(&mut rigid_body_set, &mut collider_set);
-            let i = fishes.len();
-            rigid_body_set.get_mut(handle).unwrap().user_data = i as u128;
-            let fish = Fish {
-                handle,
-                genome: [0.5; 2],
-            };
-            fishes.push(fish);
-            dead_fishes.push(i);
-        }
-
-        // For each dead fish, have another fish reproduce.
-        for &dead_index in dead_fishes.iter() {
-            let mut parent_index = rng.gen_range(0..(fishes.len() - dead_fishes.len()));
-            while dead_fishes.contains(&parent_index) {
-                parent_index += 1;
-                if parent_index == fishes.len() {
-                    parent_index = 0;
-                }
-            }
-            log::trace!("fish {:?} reproduced", parent_index);
-
-            // TODO: look into smarter mutation and 2 parent crossover.
-            let mut parent_pos = *rigid_body_set
-                .get(fishes[parent_index].handle)
-                .unwrap()
-                .position();
-
-            fishes[dead_index].genome = fishes[parent_index].genome;
-            for g in fishes[dead_index].genome.iter_mut() {
-                let shift = rng.gen::<f32>() * config.fish.mutation_factor
-                    - config.fish.mutation_factor / 2.0;
-                *g = sig(inv_sig(*g) + shift);
-            }
-
-            let rot = rng.gen::<f32>() * std::f32::consts::TAU;
-            parent_pos.rotation = Rotation::new(rot);
-            rigid_body_set
-                .get_mut(fishes[dead_index].handle)
-                .unwrap()
-                .set_position(parent_pos, true);
-        }
-
-        // Remove any extra fish
-        for i in (config.fish.count as usize)..fishes.len() {
-            rigid_body_set.remove(
-                fishes[i].handle,
+            physics_pipeline.step(
+                &gravity,
+                &integration_parameters,
                 &mut island_manager,
+                &mut broad_phase,
+                &mut narrow_phase,
+                &mut rigid_body_set,
                 &mut collider_set,
                 &mut impulse_joint_set,
                 &mut multibody_joint_set,
-                true,
+                &mut ccd_solver,
+                None,
+                &physics_hooks,
+                &event_handler,
             );
-        }
-        fishes.truncate(config.fish.count as usize);
 
+            dead_fishes.clear();
+            for (collider1, collider2, intersecting) in
+                narrow_phase.intersection_pairs_with(mouth_handle)
+            {
+                if !intersecting {
+                    continue;
+                }
+
+                let other_collider = if collider1 == mouth_handle {
+                    collider2
+                } else {
+                    collider1
+                };
+                let fish_handle = collider_set
+                    .get_mut(other_collider)
+                    .unwrap()
+                    .parent()
+                    .unwrap();
+
+                let index = rigid_body_set.get(fish_handle).unwrap().user_data;
+                dead_fishes.push(index as usize);
+
+                log::trace!("shark ate fish {:?}", index);
+            }
+
+            let _total_eaten = dead_fishes.len();
+
+            // If extra fish where requested, just add them via extra breeding.
+            for _ in fishes.len()..(config.fish.count as usize) {
+                let handle = create_fish_rigid_body(&mut rigid_body_set, &mut collider_set);
+                let i = fishes.len();
+                rigid_body_set.get_mut(handle).unwrap().user_data = i as u128;
+                let fish = Fish {
+                    handle,
+                    genome: [0.5; 2],
+                };
+                fishes.push(fish);
+                dead_fishes.push(i);
+            }
+
+            // For each dead fish, have another fish reproduce.
+            for &dead_index in dead_fishes.iter() {
+                let mut parent_index = rng.gen_range(0..(fishes.len() - dead_fishes.len()));
+                while dead_fishes.contains(&parent_index) {
+                    parent_index += 1;
+                    if parent_index == fishes.len() {
+                        parent_index = 0;
+                    }
+                }
+                log::trace!("fish {:?} reproduced", parent_index);
+
+                // TODO: look into smarter mutation and 2 parent crossover.
+                let mut parent_pos = *rigid_body_set
+                    .get(fishes[parent_index].handle)
+                    .unwrap()
+                    .position();
+
+                fishes[dead_index].genome = fishes[parent_index].genome;
+                for g in fishes[dead_index].genome.iter_mut() {
+                    let shift = rng.gen::<f32>() * config.fish.mutation_factor
+                        - config.fish.mutation_factor / 2.0;
+                    *g = sig(inv_sig(*g) + shift);
+                }
+
+                let rot = rng.gen::<f32>() * std::f32::consts::TAU;
+                parent_pos.rotation = Rotation::new(rot);
+                rigid_body_set
+                    .get_mut(fishes[dead_index].handle)
+                    .unwrap()
+                    .set_position(parent_pos, true);
+            }
+
+            // Remove any extra fish
+            for i in (config.fish.count as usize)..fishes.len() {
+                rigid_body_set.remove(
+                    fishes[i].handle,
+                    &mut island_manager,
+                    &mut collider_set,
+                    &mut impulse_joint_set,
+                    &mut multibody_joint_set,
+                    true,
+                );
+            }
+            fishes.truncate(config.fish.count as usize);
+        }
+
+        let fps = rl.get_fps().to_string();
         let width = rl.get_screen_width();
         let height = rl.get_screen_height();
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::DIMGRAY);
 
-        let mut render_backend = DebugRaylibRender::new(d, width, height, &config.sim);
+        let mut render_backend = DebugRaylibRender::new(&mut d, width, height, &config.sim);
         debug_render_pipeline.render(
             &mut render_backend,
             &rigid_body_set,
@@ -281,12 +284,15 @@ fn main() {
             &multibody_joint_set,
             &narrow_phase,
         );
+
+        d.draw_text(&fps, width - 35, 10, 20, Color::LINEN.alpha(0.5));
     }
 }
 
 fn create_shark(
     rigid_body_set: &mut RigidBodySet,
     collider_set: &mut ColliderSet,
+    config: &Config,
 ) -> (RigidBodyHandle, ColliderHandle) {
     let rigid_body = RigidBodyBuilder::dynamic().build();
     let body = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
@@ -297,6 +303,12 @@ fn create_shark(
     let mouth = ColliderBuilder::triangle(point![0.0, 3.5], point![-0.5, 4.5], point![0.5, 4.5])
         .collision_groups(InteractionGroups::new(EDIBLE_GROUP, EDIBLE_GROUP))
         .sensor(true);
+
+    let _cone_length = config.shark.vision_cone_length;
+    let _vision_angle = config.shark.vision_angle;
+    for _ in 0..config.shark.vision_cones {
+        //TODO figure out the math for cone width and angle to fully fill the vision angle.
+    }
     let shark_handle = rigid_body_set.insert(rigid_body);
     collider_set.insert_with_parent(body, shark_handle, rigid_body_set);
     let mouth_handle = collider_set.insert_with_parent(mouth, shark_handle, rigid_body_set);
@@ -373,17 +385,17 @@ fn inv_sig(x: f32) -> f32 {
     (x / (1.0 - x)).ln()
 }
 
-struct DebugRaylibRender<'a> {
-    d: RaylibDrawHandle<'a>,
+struct DebugRaylibRender<'a, 'b> {
+    d: &'a mut RaylibDrawHandle<'b>,
     scale_w: f32,
     offset_w: f32,
     scale_h: f32,
     offset_h: f32,
 }
 
-impl<'a> DebugRaylibRender<'a> {
+impl<'a, 'b> DebugRaylibRender<'a, 'b> {
     fn new(
-        d: RaylibDrawHandle<'a>,
+        d: &'a mut RaylibDrawHandle<'b>,
         screen_width: i32,
         screen_height: i32,
         sim: &config::Sim,
@@ -409,7 +421,7 @@ impl<'a> DebugRaylibRender<'a> {
     }
 }
 
-impl DebugRenderBackend for DebugRaylibRender<'_> {
+impl DebugRenderBackend for DebugRaylibRender<'_, '_> {
     fn draw_line(
         &mut self,
         _object: DebugRenderObject<'_>,
