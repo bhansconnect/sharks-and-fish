@@ -466,7 +466,7 @@ impl<'a, 'b> DebugRaylibRender<'a, 'b> {
         for &point in sightings {
             let point = self.scale_point(point);
             self.d
-                .draw_circle_v(point, 4.0, Color::DARKORANGE.alpha(0.8));
+                .draw_circle_v(point, 4.0, Color::DARKSALMON.alpha(0.8));
         }
     }
 }
