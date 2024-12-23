@@ -295,6 +295,7 @@ fn create_shark(
     config: &Config,
 ) -> (RigidBodyHandle, ColliderHandle) {
     let rigid_body = RigidBodyBuilder::dynamic().build();
+    let shark_handle = rigid_body_set.insert(rigid_body);
     let body = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
         .restitution(1.0)
         .friction(0.0)
@@ -302,14 +303,27 @@ fn create_shark(
         .build();
     let mouth = ColliderBuilder::triangle(point![0.0, 3.5], point![-0.5, 4.5], point![0.5, 4.5])
         .collision_groups(InteractionGroups::new(EDIBLE_GROUP, EDIBLE_GROUP))
+        .mass(0.0)
         .sensor(true);
 
-    let _cone_length = config.shark.vision_cone_length;
-    let _vision_angle = config.shark.vision_angle;
-    for _ in 0..config.shark.vision_cones {
-        //TODO figure out the math for cone width and angle to fully fill the vision angle.
+    let cone_length = config.shark.vision_cone_length;
+    let vision_angle = config.shark.vision_angle;
+    let cone_count = config.shark.vision_cones;
+    let cone_angle = vision_angle / cone_count as f32;
+    let far_length = (cone_angle / 2.0).to_radians().tan() * cone_length as f32;
+    for i in 0..cone_count {
+        let rot = ((cone_angle - vision_angle) / 2.0 + cone_angle * i as f32).to_radians();
+        let cone = ColliderBuilder::triangle(
+            point![0.0, 0.0],
+            point![-far_length, cone_length],
+            point![far_length, cone_length],
+        )
+        .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
+        .rotation(rot)
+        .mass(0.0)
+        .sensor(true);
+        collider_set.insert_with_parent(cone, shark_handle, rigid_body_set);
     }
-    let shark_handle = rigid_body_set.insert(rigid_body);
     collider_set.insert_with_parent(body, shark_handle, rigid_body_set);
     let mouth_handle = collider_set.insert_with_parent(mouth, shark_handle, rigid_body_set);
     (shark_handle, mouth_handle)

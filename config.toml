@@ -4,13 +4,13 @@ target_fps = 60
 # This is 16:9 aspect ratio.
 width = 192.0
 height = 108.0
-sims_per_frame = 250
+sims_per_frame = 1
 
 
 [shark]
 vision_cones = 8
-vision_cone_length = 10.0
-vision_angle = 180.0
+vision_cone_length = 30.0
+vision_angle = 120.0
 linear_damping = 1.5
 angular_damping = 1.0
 max_force = 120.0
