@@ -13,6 +13,7 @@ use std::{
 };
 
 mod config;
+mod dqn;
 use config::Config;
 
 const DEFAULT_WIDTH: i32 = 1280;
@@ -93,6 +94,14 @@ fn main() {
         .watch(Path::new(CONFIG_PATH), NonRecursive)
         .expect("failed to watch config file");
 
+    type Backend = burn::backend::Wgpu<f32, i32>;
+    let device = Default::default();
+    let num_inputs = init_config.shark.vision_rays as usize * 3 + 3; // rays * (dist, rot, is_fish) + (x vel, y vel, angular vel)
+    let num_outputs = 9; // cardinal directions and neutral (left, left forward, forward, right forward, ...)
+    let model = dqn::ModelConfig::new(num_inputs, 32, num_outputs).init::<Backend>(&device);
+    let mut input_data = vec![0.0f32; num_inputs];
+    log::debug!("Loading model: {:#?}", model);
+
     let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
     let mut rng = Pcg64::from_entropy();
     let mut fishes = vec![];
@@ -125,9 +134,100 @@ fn main() {
     let debug_render_mode = DebugRenderMode::COLLIDER_SHAPES;
     let debug_render_style = DebugRenderStyle::default();
     let mut debug_render_pipeline = DebugRenderPipeline::new(debug_render_style, debug_render_mode);
+    let mut step = 0;
+    let mut human_control = false;
     while !rl.window_should_close() {
         let config = load_config();
         for _ in 0..config.sim.sims_per_frame {
+            sightings.clear();
+
+            use raylib::consts::KeyboardKey::*;
+            if rl.is_key_pressed(KEY_SPACE) {
+                human_control = !human_control;
+            }
+
+            let (forward, right) = if !human_control {
+                let shark_pos = *rigid_body_set.get_mut(shark_handle).unwrap().position();
+                // Ray count can not change mid run. Would break the model.
+                let ray_count = init_config.shark.vision_rays;
+                let vision_angle = config.shark.vision_angle;
+                let step_angle = vision_angle / ray_count as f32;
+                let start = (step_angle - vision_angle) / 2.0;
+                for i in 0..ray_count {
+                    let angle = start + step_angle * i as f32;
+                    let (sin, cos) = angle.to_radians().sin_cos();
+                    let ray = rapier2d::geometry::Ray::new(
+                        point![0.0, 0.0],
+                        vector![sin, cos] * config.shark.vision_dist,
+                    )
+                    .transform_by(&shark_pos);
+
+                    if let Some((handle, dist)) = query_pipeline.cast_ray(
+                        &rigid_body_set,
+                        &collider_set,
+                        &ray,
+                        1.0,
+                        /*solid=*/ true,
+                        QueryFilter::default()
+                            .exclude_sensors()
+                            .exclude_rigid_body(shark_handle),
+                    ) {
+                        let is_fish = !walls.contains(&handle);
+                        let target_pos = collider_set.get_mut(handle).unwrap().position();
+                        let target_rot = shark_pos.rotation.rotation_to(&target_pos.rotation);
+
+                        input_data[i as usize * 3 + 0] = dist;
+                        input_data[i as usize * 3 + 1] = target_rot.angle();
+                        input_data[i as usize * 3 + 2] = (is_fish as u32) as f32;
+                        sightings.push(ray.point_at(dist));
+                    } else {
+                        input_data[i as usize * 3 + 0] = 1.0;
+                        input_data[i as usize * 3 + 1] = 0.0;
+                        input_data[i as usize * 3 + 2] = 0.0;
+                    }
+                }
+                let inputs =
+                    burn::tensor::Tensor::<Backend, 1>::from_floats(input_data.as_slice(), &device);
+                let out = model.pick_action(inputs, step, &mut rng);
+                match out {
+                    0 => (-1, -1),
+                    1 => (-1, 0),
+                    2 => (-1, 1),
+                    3 => (0, -1),
+                    4 => (0, 0),
+                    5 => (0, 1),
+                    6 => (1, -1),
+                    7 => (1, 0),
+                    8 => (1, 1),
+                    _ => unreachable!(),
+                }
+            } else {
+                let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
+                let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
+                // Limit max backwards acceleration.
+                (forward, right)
+            };
+
+            let forward = (config.shark.max_force * forward as f32)
+                .max(config.shark.max_reverse_force)
+                .min(config.shark.max_force);
+
+            let shark = rigid_body_set.get_mut(shark_handle).unwrap();
+            let shark_forward_force = forward;
+            let shark_torque = config.shark.max_torque * right as f32;
+            let shark_rot = shark.rotation();
+            let shark_force = vector![
+                shark_forward_force * -shark_rot.im,
+                shark_forward_force * shark_rot.re
+            ];
+            shark.set_linear_damping(config.shark.linear_damping);
+            shark.set_angular_damping(config.shark.angular_damping);
+
+            shark.reset_forces(true);
+            shark.add_force(shark_force, true);
+            shark.reset_torques(true);
+            shark.add_torque(shark_torque, true);
+
             for fish in fishes.iter() {
                 let fish_rigid_body = rigid_body_set.get_mut(fish.handle).unwrap();
                 fish_rigid_body.set_linear_damping(config.fish.linear_damping);
@@ -152,30 +252,6 @@ fn main() {
                 fish_rigid_body.reset_torques(true);
                 fish_rigid_body.add_torque(fish_torque, true);
             }
-
-            use raylib::consts::KeyboardKey::*;
-            let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
-            let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
-            // Limit max backwards acceleration.
-            let forward = (config.shark.max_force * forward as f32)
-                .max(config.shark.max_reverse_force)
-                .min(config.shark.max_force);
-
-            let shark = rigid_body_set.get_mut(shark_handle).unwrap();
-            let shark_forward_force = forward;
-            let shark_torque = config.shark.max_torque * right as f32;
-            let shark_rot = shark.rotation();
-            let shark_force = vector![
-                shark_forward_force * -shark_rot.im,
-                shark_forward_force * shark_rot.re
-            ];
-            shark.set_linear_damping(config.shark.linear_damping);
-            shark.set_angular_damping(config.shark.angular_damping);
-
-            shark.reset_forces(true);
-            shark.add_force(shark_force, true);
-            shark.reset_torques(true);
-            shark.add_torque(shark_torque, true);
 
             physics_pipeline.step(
                 &gravity,
@@ -218,42 +294,6 @@ fn main() {
                 log::debug!("shark ate fish {:?}", index);
             }
 
-            sightings.clear();
-            let shark_pos = *rigid_body_set.get_mut(shark_handle).unwrap().position();
-            let ray_count = config.shark.vision_rays;
-            let vision_angle = config.shark.vision_angle;
-            let step_angle = vision_angle / ray_count as f32;
-            let start = (step_angle - vision_angle) / 2.0;
-            for i in 0..ray_count {
-                let angle = start + step_angle * i as f32;
-                let (sin, cos) = angle.to_radians().sin_cos();
-                let ray = rapier2d::geometry::Ray::new(point![0.0, 0.0], vector![sin, cos])
-                    .transform_by(&shark_pos);
-
-                if let Some((handle, dist)) = query_pipeline.cast_ray(
-                    &rigid_body_set,
-                    &collider_set,
-                    &ray,
-                    config.shark.vision_dist,
-                    /*solid=*/ true,
-                    QueryFilter::default()
-                        .exclude_sensors()
-                        .exclude_rigid_body(shark_handle),
-                ) {
-                    let is_fish = !walls.contains(&handle);
-                    let target_pos = collider_set.get_mut(handle).unwrap().position();
-                    // TODO: maybe leave this to the neural network?
-                    let target_rot = shark_pos.rotation.rotation_to(&target_pos.rotation);
-                    log::trace!(
-                        "ray {} see {} at {} with rot {}",
-                        i,
-                        if is_fish { "fish" } else { "wall" },
-                        dist.round(),
-                        target_rot.angle().to_degrees().round(),
-                    );
-                    sightings.push(ray.point_at(dist));
-                }
-            }
             let _total_eaten = dead_fishes.len();
 
             // If extra fish where requested, just add them via extra breeding.
@@ -313,6 +353,7 @@ fn main() {
                 );
             }
             fishes.truncate(config.fish.count as usize);
+            step += 1;
         }
 
         let fps = rl.get_fps().to_string();
