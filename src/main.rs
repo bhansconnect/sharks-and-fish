@@ -1,3 +1,4 @@
+use nalgebra::{distance_squared, UnitComplex};
 use notify::{RecursiveMode::NonRecursive, Watcher};
 use rand::prelude::*;
 use rand_pcg::Pcg64;
@@ -42,40 +43,49 @@ fn main() {
 
     // Create the walls.
     let thickness = 1.0;
-    collider_set.insert(
-        ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
-            .translation(vector![0.0, 0.5 * init_config.sim.height + thickness / 2.0])
-            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
-            .restitution(1.0)
-            .friction(0.0)
-            .build(),
+    let mut walls = vec![];
+    walls.push(
+        collider_set.insert(
+            ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
+                .translation(vector![0.0, 0.5 * init_config.sim.height + thickness / 2.0])
+                .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
+                .restitution(1.0)
+                .friction(0.0)
+                .build(),
+        ),
     );
-    collider_set.insert(
-        ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
-            .translation(vector![
-                0.0,
-                -0.5 * init_config.sim.height - thickness / 2.0
-            ])
-            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
-            .restitution(1.0)
-            .friction(0.0)
-            .build(),
+    walls.push(
+        collider_set.insert(
+            ColliderBuilder::cuboid(init_config.sim.width / 2.0, thickness)
+                .translation(vector![
+                    0.0,
+                    -0.5 * init_config.sim.height - thickness / 2.0
+                ])
+                .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
+                .restitution(1.0)
+                .friction(0.0)
+                .build(),
+        ),
     );
-    collider_set.insert(
-        ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
-            .translation(vector![0.5 * init_config.sim.width + thickness / 2.0, 0.0])
-            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
-            .restitution(1.0)
-            .friction(0.0)
-            .build(),
+    walls.push(
+        collider_set.insert(
+            ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
+                .translation(vector![0.5 * init_config.sim.width + thickness / 2.0, 0.0])
+                .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
+                .restitution(1.0)
+                .friction(0.0)
+                .build(),
+        ),
     );
-    collider_set.insert(
-        ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
-            .translation(vector![-0.5 * init_config.sim.width - thickness / 2.0, 0.0])
-            .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
-            .restitution(1.0)
-            .friction(0.0)
-            .build(),
+    walls.push(
+        collider_set.insert(
+            ColliderBuilder::cuboid(thickness, init_config.sim.height / 2.0)
+                .translation(vector![-0.5 * init_config.sim.width - thickness / 2.0, 0.0])
+                .collision_groups(InteractionGroups::new(MAIN_GROUP, MAIN_GROUP))
+                .restitution(1.0)
+                .friction(0.0)
+                .build(),
+        ),
     );
 
     let mut watcher =
@@ -84,7 +94,7 @@ fn main() {
         .watch(Path::new(CONFIG_PATH), NonRecursive)
         .expect("failed to watch config file");
 
-    let (shark_handle, mouth_handle) =
+    let (shark_handle, mouth_handle, cones) =
         create_shark(&mut rigid_body_set, &mut collider_set, &init_config);
     let mut rng = Pcg64::from_entropy();
     let mut fishes = vec![];
@@ -208,6 +218,48 @@ fn main() {
                 log::trace!("shark ate fish {:?}", index);
             }
 
+            // TODO: make this a proper burn tensor and network.
+            let shark_pos = rigid_body_set.get_mut(shark_handle).unwrap().position();
+            for (i, &cone_handle) in cones.iter().enumerate() {
+                let mut best_dist = f32::INFINITY;
+                let mut is_fish = false;
+                let mut rot = UnitComplex::identity();
+                for (collider1, collider2, intersecting) in
+                    narrow_phase.intersection_pairs_with(cone_handle)
+                {
+                    if !intersecting {
+                        continue;
+                    }
+                    let other_collider = if collider1 == cone_handle {
+                        collider2
+                    } else {
+                        collider1
+                    };
+
+                    let target_pos = collider_set.get_mut(other_collider).unwrap().position();
+                    let dist = distance_squared(
+                        &point![shark_pos.translation.x, shark_pos.translation.y],
+                        &point![target_pos.translation.x, target_pos.translation.y],
+                    );
+                    if dist < best_dist {
+                        best_dist = dist;
+                        is_fish = !walls.contains(&other_collider);
+                        rot = shark_pos.rotation.rotation_to(&target_pos.rotation);
+                    }
+                }
+                if best_dist != f32::INFINITY {
+                    let dist = best_dist
+                        / (config.shark.vision_cone_length * config.shark.vision_cone_length);
+                    log::trace!(
+                        "Cone {} see {} at {} with rot {}",
+                        i,
+                        if is_fish { "fish" } else { "wall" },
+                        dist,
+                        rot.angle(),
+                    );
+                }
+            }
+
             let _total_eaten = dead_fishes.len();
 
             // If extra fish where requested, just add them via extra breeding.
@@ -293,7 +345,7 @@ fn create_shark(
     rigid_body_set: &mut RigidBodySet,
     collider_set: &mut ColliderSet,
     config: &Config,
-) -> (RigidBodyHandle, ColliderHandle) {
+) -> (RigidBodyHandle, ColliderHandle, Vec<ColliderHandle>) {
     let rigid_body = RigidBodyBuilder::dynamic().build();
     let shark_handle = rigid_body_set.insert(rigid_body);
     let body = ColliderBuilder::triangle(point![0.0, 4.0], point![-1.0, 0.0], point![1.0, 0.0])
@@ -311,6 +363,7 @@ fn create_shark(
     let cone_count = config.shark.vision_cones;
     let cone_angle = vision_angle / cone_count as f32;
     let far_length = (cone_angle / 2.0).to_radians().tan() * cone_length as f32;
+    let mut cones = vec![];
     for i in 0..cone_count {
         let rot = ((cone_angle - vision_angle) / 2.0 + cone_angle * i as f32).to_radians();
         let cone = ColliderBuilder::triangle(
@@ -322,11 +375,12 @@ fn create_shark(
         .rotation(rot)
         .mass(0.0)
         .sensor(true);
-        collider_set.insert_with_parent(cone, shark_handle, rigid_body_set);
+        let cone_handle = collider_set.insert_with_parent(cone, shark_handle, rigid_body_set);
+        cones.push(cone_handle);
     }
     collider_set.insert_with_parent(body, shark_handle, rigid_body_set);
     let mouth_handle = collider_set.insert_with_parent(mouth, shark_handle, rigid_body_set);
-    (shark_handle, mouth_handle)
+    (shark_handle, mouth_handle, cones)
 }
 
 struct Fish {
