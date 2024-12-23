@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 burn = { version = "0.15.0", features = ["train", "wgpu", "metal", "metrics", "fusion"] }
+ringbuffer = "0.15.0"
 
 raylib = "5.0.2"
 rapier2d = { version = "0.22.0", features = [ "simd-stable", "parallel", "debug-render" ] }

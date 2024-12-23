@@ -94,16 +94,28 @@ fn main() {
         .watch(Path::new(CONFIG_PATH), NonRecursive)
         .expect("failed to watch config file");
 
-    type Backend = burn::backend::Wgpu<f32, i32>;
+    type Backend = burn::backend::Autodiff<burn::backend::Wgpu<f32, i32>>;
     let device = Default::default();
     let num_inputs = init_config.shark.vision_rays as usize * 3 + 3; // rays * (dist, rot, is_fish) + (x vel, y vel, angular vel)
     let num_outputs = 9; // cardinal directions and neutral (left, left forward, forward, right forward, ...)
-    let model = dqn::ModelConfig::new(num_inputs, 32, num_outputs).init::<Backend>(&device);
+    let mut model = dqn::ModelConfig::new(
+        num_inputs,
+        init_config.dqn.hidden_size as usize,
+        num_outputs,
+        init_config.dqn.replay_buffer_size as usize,
+        init_config.dqn.batch_size as usize,
+        init_config.dqn.tau,
+        init_config.dqn.gamma,
+        init_config.dqn.learning_rate,
+        init_config.dqn.eps_decay,
+    )
+    .init::<Backend>(&device);
     let mut input_data = vec![0.0f32; num_inputs];
-    log::debug!("Loading model: {:#?}", model);
+    log::debug!("Loading model: {:#?}", model.network);
 
-    let (shark_handle, mouth_handle) = create_shark(&mut rigid_body_set, &mut collider_set);
     let mut rng = Pcg64::from_entropy();
+    let (shark_handle, mouth_handle) =
+        create_shark(&mut rigid_body_set, &mut collider_set, &mut rng);
     let mut fishes = vec![];
     let mut dead_fishes = vec![];
     let mut sightings = vec![];
@@ -136,6 +148,10 @@ fn main() {
     let mut debug_render_pipeline = DebugRenderPipeline::new(debug_render_style, debug_render_mode);
     let mut step = 0;
     let mut human_control = false;
+    let mut last_eat_step = 0;
+    let mut last_state = None;
+    let mut last_action = 0;
+    let mut last_reward = 0.0;
     while !rl.window_should_close() {
         let config = load_config();
         for _ in 0..config.sim.sims_per_frame {
@@ -147,6 +163,13 @@ fn main() {
             }
 
             let (forward, right) = if !human_control {
+                if step - last_eat_step > config.dqn.reset_delay as u64 {
+                    last_state = None;
+                    log::info!("Reseting shark due to long time since last eating.")
+                    let rot = rng.gen::<f32>() * std::f32::consts::TAU;
+                    let shark = rigid_body_set.get_mut(shark_handle).unwrap();
+                    shark.set_position(Isometry::new(vector![0.0, 0.0], rot), true);
+                }
                 let shark_pos = *rigid_body_set.get_mut(shark_handle).unwrap().position();
                 // Ray count can not change mid run. Would break the model.
                 let ray_count = init_config.shark.vision_rays;
@@ -186,10 +209,32 @@ fn main() {
                         input_data[i as usize * 3 + 2] = 0.0;
                     }
                 }
-                let inputs =
+                let state =
                     burn::tensor::Tensor::<Backend, 1>::from_floats(input_data.as_slice(), &device);
-                let out = model.pick_action(inputs, step, &mut rng);
-                match out {
+                if let Some(last_state) = last_state {
+                    let hist = dqn::Hist {
+                        state: last_state,
+                        action: last_action,
+                        reward: last_reward,
+                        next_state: state.clone(),
+                    };
+                    model.push(hist);
+                    if step % config.dqn.train_freq as u64 == 0 {
+                        model.train(&mut rng);
+                    }
+                    if step % 10000 == 0 {
+                        log::debug!(
+                            "step {}: {}, {}",
+                            step,
+                            model.memory.len(),
+                            model.eps_threshold(step)
+                        )
+                    }
+                }
+                last_state = Some(state.clone());
+                let action = model.pick_action(state, step, &mut rng);
+                last_action = action;
+                match action {
                     0 => (-1, -1),
                     1 => (-1, 0),
                     2 => (-1, 1),
@@ -202,6 +247,7 @@ fn main() {
                     _ => unreachable!(),
                 }
             } else {
+                last_state = None;
                 let forward = rl.is_key_down(KEY_UP) as i32 - rl.is_key_down(KEY_DOWN) as i32;
                 let right = rl.is_key_down(KEY_RIGHT) as i32 - rl.is_key_down(KEY_LEFT) as i32;
                 // Limit max backwards acceleration.
@@ -294,7 +340,10 @@ fn main() {
                 log::debug!("shark ate fish {:?}", index);
             }
 
-            let _total_eaten = dead_fishes.len();
+            last_reward = dead_fishes.len() as f32;
+            if last_reward > 0.0 {
+                last_eat_step = step;
+            }
 
             // If extra fish where requested, just add them via extra breeding.
             for _ in fishes.len()..(config.fish.count as usize) {
@@ -380,6 +429,7 @@ fn main() {
 fn create_shark(
     rigid_body_set: &mut RigidBodySet,
     collider_set: &mut ColliderSet,
+    rng: &mut Pcg64,
 ) -> (RigidBodyHandle, ColliderHandle) {
     let rigid_body = RigidBodyBuilder::dynamic().build();
     let shark_handle = rigid_body_set.insert(rigid_body);
@@ -392,6 +442,10 @@ fn create_shark(
         .collision_groups(InteractionGroups::new(EDIBLE_GROUP, EDIBLE_GROUP))
         .mass(0.0)
         .sensor(true);
+
+    let rot = rng.gen::<f32>() * std::f32::consts::TAU;
+    let shark = rigid_body_set.get_mut(shark_handle).unwrap();
+    shark.set_position(Isometry::new(vector![0.0, 0.0], rot), true);
 
     collider_set.insert_with_parent(body, shark_handle, rigid_body_set);
     let mouth_handle = collider_set.insert_with_parent(mouth, shark_handle, rigid_body_set);

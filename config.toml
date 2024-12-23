@@ -27,3 +27,14 @@ max_force = 40.0
 max_reverse_force = -30.0
 max_torque = 20.0
 mutation_factor = 0.1
+
+[dqn]
+hidden_size = 32
+replay_buffer_size = 1000000
+train_freq = 512
+batch_size = 128
+gamma = 0.999
+tau = 0.005
+learning_rate = 0.001
+eps_decay = 1000000.0
+reset_delay = 100000
