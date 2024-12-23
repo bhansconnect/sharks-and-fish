@@ -8,8 +8,8 @@ sims_per_frame = 1
 
 
 [shark]
-vision_cones = 8
-vision_cone_length = 30.0
+vision_rays = 32
+vision_dist = 30.0
 vision_angle = 120.0
 linear_damping = 1.5
 angular_damping = 1.0

@@ -17,8 +17,8 @@ pub struct Sim {
 
 #[derive(Deserialize, Debug, Clone, Copy)]
 pub struct Shark {
-    pub vision_cones: u32,
-    pub vision_cone_length: f32,
+    pub vision_rays: u32,
+    pub vision_dist: f32,
     pub vision_angle: f32,
     pub linear_damping: f32,
     pub angular_damping: f32,
