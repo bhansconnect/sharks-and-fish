@@ -10,7 +10,7 @@ sims_per_frame = 1
 [shark]
 vision_rays = 32
 vision_dist = 30.0
-vision_angle = 120.0
+vision_angle = 100.0
 linear_damping = 1.5
 angular_damping = 1.0
 max_force = 120.0

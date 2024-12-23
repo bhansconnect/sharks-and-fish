@@ -215,7 +215,7 @@ fn main() {
                 let index = rigid_body_set.get(fish_handle).unwrap().user_data;
                 dead_fishes.push(index as usize);
 
-                log::trace!("shark ate fish {:?}", index);
+                log::debug!("shark ate fish {:?}", index);
             }
 
             sightings.clear();
@@ -240,17 +240,17 @@ fn main() {
                         .exclude_sensors()
                         .exclude_rigid_body(shark_handle),
                 ) {
-                    let _is_fish = !walls.contains(&handle);
+                    let is_fish = !walls.contains(&handle);
                     let target_pos = collider_set.get_mut(handle).unwrap().position();
                     // TODO: maybe leave this to the neural network?
-                    let _target_rot = shark_pos.rotation.rotation_to(&target_pos.rotation);
-                    // log::trace!(
-                    //     "ray {} see {} at {} with rot {}",
-                    //     i,
-                    //     if is_fish { "fish" } else { "wall" },
-                    //     dist.round(),
-                    //     rot.angle().to_degrees().round(),
-                    // );
+                    let target_rot = shark_pos.rotation.rotation_to(&target_pos.rotation);
+                    log::trace!(
+                        "ray {} see {} at {} with rot {}",
+                        i,
+                        if is_fish { "fish" } else { "wall" },
+                        dist.round(),
+                        target_rot.angle().to_degrees().round(),
+                    );
                     sightings.push(ray.point_at(dist));
                 }
             }
@@ -278,7 +278,7 @@ fn main() {
                         parent_index = 0;
                     }
                 }
-                log::trace!("fish {:?} reproduced", parent_index);
+                log::debug!("fish {:?} reproduced", parent_index);
 
                 // TODO: look into smarter mutation and 2 parent crossover.
                 let mut parent_pos = *rigid_body_set
@@ -465,7 +465,8 @@ impl<'a, 'b> DebugRaylibRender<'a, 'b> {
     fn draw_sightings(&mut self, sightings: &[Point<f32>]) {
         for &point in sightings {
             let point = self.scale_point(point);
-            self.d.draw_circle_v(point, 2.0, Color::RED.alpha(0.5));
+            self.d
+                .draw_circle_v(point, 4.0, Color::DARKORANGE.alpha(0.8));
         }
     }
 }
@@ -492,7 +493,7 @@ static CONFIG_UPDATED: AtomicBool = AtomicBool::new(false);
 fn load_config_from_file() -> Config {
     let config = std::fs::read_to_string(CONFIG_PATH).expect("failed to read config");
     let out = toml::from_str(&config).expect("failed to deserialize config");
-    log::trace!("Loaded config: {:?}", out);
+    log::debug!("Loaded config: {:#?}", out);
     out
 }
 
