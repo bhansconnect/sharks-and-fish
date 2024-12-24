@@ -165,7 +165,8 @@ fn main() {
             let (forward, right) = if !human_control {
                 if step - last_eat_step > config.dqn.reset_delay as u64 {
                     last_state = None;
-                    log::info!("Reseting shark due to long time since last eating.")
+                    last_eat_step = step;
+                    log::info!("Reseting shark due to long time since last eating.");
                     let rot = rng.gen::<f32>() * std::f32::consts::TAU;
                     let shark = rigid_body_set.get_mut(shark_handle).unwrap();
                     shark.set_position(Isometry::new(vector![0.0, 0.0], rot), true);
