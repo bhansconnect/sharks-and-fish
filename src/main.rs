@@ -3,6 +3,7 @@ use rand::prelude::*;
 use rand_pcg::Pcg64;
 use rapier2d::prelude::*;
 use raylib::prelude::*;
+use ringbuffer::RingBuffer;
 use std::{
     mem::MaybeUninit,
     path::Path,

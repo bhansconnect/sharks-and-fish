@@ -8,7 +8,7 @@ use burn::{
 use nn::loss::{MseLoss, Reduction};
 use rand::Rng;
 use rand_pcg::Pcg64;
-use ringbuffer::{GrowableAllocRingBuffer, RingBuffer};
+use ringbuffer::{AllocRingBuffer, RingBuffer};
 
 pub struct Hist<B: Backend> {
     pub state: Tensor<B, 1>,
@@ -20,7 +20,7 @@ pub struct Hist<B: Backend> {
 pub struct DQNTrainer<'a, B: AutodiffBackend> {
     pub network: Model<B>,
     target: Model<B>,
-    pub memory: GrowableAllocRingBuffer<Hist<B>>,
+    pub memory: AllocRingBuffer<Hist<B>>,
     batch_size: usize,
     device: &'a Device<B>,
     optimizer: OptimizerAdaptor<AdamW<B::InnerBackend>, Model<B>, B>,
@@ -211,7 +211,7 @@ impl ModelConfig {
         DQNTrainer {
             network: model.clone(),
             target: model,
-            memory: GrowableAllocRingBuffer::with_capacity(self.replay_buffer_size),
+            memory: AllocRingBuffer::new(self.replay_buffer_size),
             batch_size: self.batch_size,
             device,
             optimizer,
