@@ -152,6 +152,7 @@ fn main() {
     let mut last_state = None;
     let mut last_action = 0;
     let mut last_reward = 0.0;
+    let mut rough_score = 0.0;
     while !rl.window_should_close() {
         let config = load_config();
         for _ in 0..config.sim.sims_per_frame {
@@ -345,6 +346,7 @@ fn main() {
             if last_reward > 0.0 {
                 last_eat_step = step;
             }
+            rough_score = last_reward + rough_score * config.dqn.gamma;
 
             // If extra fish where requested, just add them via extra breeding.
             for _ in fishes.len()..(config.fish.count as usize) {
@@ -424,6 +426,13 @@ fn main() {
 
         render_backend.draw_sightings(&sightings);
         d.draw_text(&fps, width - 35, 10, 20, Color::LINEN.alpha(0.5));
+        d.draw_text(
+            &format!("{:.04}", rough_score),
+            15,
+            10,
+            20,
+            Color::LINEN.alpha(0.5),
+        );
     }
 }
 
